@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>it</string>
+    <key>CFBundleExecutable</key><string>Lumo</string>
+    <key>CFBundleIdentifier</key><string>com.studyboard.lumo</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>Lumo</string>
+    <key>CFBundleDisplayName</key><string>Lumo</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array><string>iPhoneOS</string></array>
+    <key>MinimumOSVersion</key><string>16.0</string>
+    <key>LSRequiresIPhoneOS</key><true/>
+    <key>UIDeviceFamily</key>
+    <array><integer>1</integer></array>
+    <key>UILaunchScreen</key><dict/>
+    <key>UIRequiredDeviceCapabilities</key>
+    <array><string>arm64</string></array>
+    <key>UISupportedInterfaceOrientations</key>
+    <array><string>UIInterfaceOrientationPortrait</string></array>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Il microfono serve per farti fare domande a voce a Lumo.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Il riconoscimento vocale trasforma le tue domande dette a voce in testo.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Le foto servono per leggere il testo di esercizi e appunti.</string>
+</dict>
+</plist>
