@@ -37,7 +37,7 @@ struct HomeView: View {
                         .padding(.horizontal, 22)
                         .padding(.vertical, 14)
                         .background(Capsule().fill(Theme.card))
-                    if settings.apiKey.trimmed.isEmpty {
+                    if settings.cleanKey.isEmpty {
                         Button { showSettings = true } label: {
                             Text("Aggiungi la chiave API gratuita")
                                 .font(.system(size: 15, weight: .bold, design: .rounded))
@@ -134,6 +134,9 @@ struct SettingsView: View {
     @EnvironmentObject var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
     @StateObject private var tester = SpeechEngine()
+    @State private var showKey = false
+    @State private var verifyText = ""
+    @State private var verifying = false
 
     var body: some View {
         NavigationStack {
@@ -144,9 +147,33 @@ struct SettingsView: View {
                             Text(p.label).tag(p)
                         }
                     }
-                    SecureField("Chiave API", text: $settings.apiKey)
+                    HStack {
+                        Group {
+                            if showKey {
+                                TextField("Incolla qui la chiave API", text: $settings.apiKey)
+                            } else {
+                                SecureField("Incolla qui la chiave API", text: $settings.apiKey)
+                            }
+                        }
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        Button { showKey.toggle() } label: {
+                            Image(systemName: showKey ? "eye.slash" : "eye")
+                                .foregroundColor(.gray)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Button("Incolla dagli appunti") {
+                        if let clip = UIPasteboard.general.string {
+                            settings.apiKey = clip
+                        }
+                    }
+                    HStack {
+                        Text("Chiave salvata")
+                        Spacer()
+                        Text(settings.cleanKey.isEmpty ? "nessuna" : "\(settings.cleanKey.count) caratteri")
+                            .foregroundColor(settings.cleanKey.isEmpty ? Theme.flame : .green)
+                    }
                     TextField("Modello", text: $settings.model)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -154,6 +181,20 @@ struct SettingsView: View {
                         TextField("URL (…/chat/completions)", text: $settings.customURL)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
+                    }
+                    Button {
+                        Task { await verify() }
+                    } label: {
+                        HStack {
+                            Text(verifying ? "Controllo in corso\u{2026}" : "Verifica chiave e modello")
+                            if verifying { Spacer(); ProgressView() }
+                        }
+                    }
+                    .disabled(verifying)
+                    if !verifyText.isEmpty {
+                        Text(verifyText)
+                            .font(.system(size: 14))
+                            .foregroundColor(verifyText.hasPrefix("\u{2705}") ? .green : Theme.flame)
                     }
                     if let url = settings.provider.keyURL {
                         Link("Ottieni una chiave gratuita", destination: url)
@@ -210,5 +251,57 @@ struct SettingsView: View {
         .onChange(of: settings.provider) { p in
             if p != .custom { settings.model = p.defaultModel }
         }
+    }
+
+    private func verify() async {
+        verifying = true
+        verifyText = ""
+        let key = settings.cleanKey
+        guard !key.isEmpty else {
+            verifyText = "Incolla prima la chiave API."
+            verifying = false
+            return
+        }
+        var note = ""
+
+        // 1) elenco dei modelli: controlla che la chiave sia valida e che il modello esista ancora
+        if settings.provider != .custom {
+            do {
+                let ids = try await LLMClient.listModels(endpoint: settings.endpoint, apiKey: key)
+                if !ids.isEmpty {
+                    let cur = settings.effectiveModel
+                    let exists = ids.contains(where: { $0 == cur || $0 == "models/" + cur })
+                    if !exists, let best = LLMClient.pickModel(ids: ids, provider: settings.provider) {
+                        settings.model = best
+                        note = "Il modello precedente non c\u{2019}era pi\u{00F9}: ho scelto \(best). "
+                    }
+                }
+            } catch {
+                let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                verifyText = "\u{274C} " + msg
+                verifying = false
+                return
+            }
+        }
+
+        // 2) prova reale: una domanda minuscola in streaming
+        do {
+            var got = ""
+            let test = [ChatMessage(role: "user", content: "Rispondi con una sola parola: ok")]
+            for try await chunk in LLMClient.stream(endpoint: settings.endpoint, apiKey: key,
+                                                    model: settings.effectiveModel, messages: test) {
+                got += chunk
+                if !got.isEmpty { break }
+            }
+            if got.isEmpty {
+                verifyText = "\u{26A0}\u{FE0F} Il servizio non ha risposto. Riprova tra poco."
+            } else {
+                verifyText = "\u{2705} " + note + "Tutto funziona con \(settings.effectiveModel)."
+            }
+        } catch {
+            let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            verifyText = "\u{274C} " + msg
+        }
+        verifying = false
     }
 }

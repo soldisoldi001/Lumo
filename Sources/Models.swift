@@ -95,6 +95,16 @@ final class AppSettings: ObservableObject {
         provider == .custom ? customURL.trimmed : provider.endpoint
     }
 
+    /// Chiave ripulita da spazi, a capo, virgolette e dal prefisso "Bearer".
+    var cleanKey: String {
+        var k = apiKey.trimmed
+        for junk in ["\"", "'", "\u{201C}", "\u{201D}"] {
+            k = k.replacingOccurrences(of: junk, with: "")
+        }
+        if k.lowercased().hasPrefix("bearer ") { k = String(k.dropFirst(7)) }
+        return k.filter { !$0.isWhitespace }
+    }
+
     var effectiveModel: String {
         let m = model.trimmed
         return m.isEmpty ? provider.defaultModel : m
@@ -117,7 +127,7 @@ final class AppSettings: ObservableObject {
 // MARK: - Whiteboard blocks
 
 enum BlockKind: String {
-    case title, box, list, arrow, note, formula, question
+    case title, box, flow, merge, table, icon, list, arrow, formula, note, tip, question
 }
 
 struct BoardBlock: Identifiable {
@@ -125,11 +135,15 @@ struct BoardBlock: Identifiable {
     var kind: BlockKind
     var text: String
     var items: [String] = []
+    var sub: String = ""
+    var subs: [String] = []
     var say: String = ""
     var color: String = "violet"
 
     var displayLength: Int {
-        text.count + items.reduce(0) { $0 + $1.count }
+        text.count + sub.count
+            + items.reduce(0) { $0 + $1.count }
+            + subs.reduce(0) { $0 + $1.count }
     }
 
     static func parse(_ json: String) -> BoardBlock? {
@@ -139,9 +153,11 @@ struct BoardBlock: Identifiable {
         let kind = BlockKind(rawValue: t) ?? .box
         let text = ((o["text"] as? String) ?? "").trimmed
         let items = ((o["items"] as? [Any]) ?? []).compactMap { $0 as? String }
+        let subs = ((o["subs"] as? [Any]) ?? []).compactMap { $0 as? String }
+        let sub = ((o["sub"] as? String) ?? "").trimmed
         let say = ((o["say"] as? String) ?? "").trimmed
         let color = ((o["color"] as? String) ?? "violet").lowercased()
         if text.isEmpty && items.isEmpty { return nil }
-        return BoardBlock(kind: kind, text: text, items: items, say: say, color: color)
+        return BoardBlock(kind: kind, text: text, items: items, sub: sub, subs: subs, say: say, color: color)
     }
 }

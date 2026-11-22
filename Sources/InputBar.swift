@@ -3,6 +3,7 @@ import PhotosUI
 
 struct InputBar: View {
     @Binding var text: String
+    var placeholder: String = "Chiedi a Lumo\u{2026}"
     var onSend: () -> Void
 
     @StateObject private var voice = VoiceInput()
@@ -20,7 +21,7 @@ struct InputBar: View {
 
             HStack(spacing: 10) {
                 TextField("", text: $text,
-                          prompt: Text("Chiedi a Lumo…").foregroundColor(Color.white.opacity(0.45)))
+                          prompt: Text(placeholder).foregroundColor(Color.white.opacity(0.45)))
                     .foregroundColor(.white)
                     .submitLabel(.send)
                     .onSubmit { send() }

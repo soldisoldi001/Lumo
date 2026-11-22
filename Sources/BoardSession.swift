@@ -38,8 +38,8 @@ final class BoardSession: ObservableObject {
         pendingError = nil
         paused = false
 
-        guard !settings.apiKey.trimmed.isEmpty else {
-            status = .error("Inserisci la chiave API gratuita nelle impostazioni (icona ingranaggio nella home).")
+        guard !settings.cleanKey.isEmpty else {
+            status = .error("Manca la chiave API: aprila dall'ingranaggio nella home e tocca Verifica chiave e modello.")
             return
         }
 
@@ -54,7 +54,7 @@ final class BoardSession: ObservableObject {
         messages.append(ChatMessage(role: "user", content: q))
 
         let endpoint = settings.endpoint
-        let key = settings.apiKey.trimmed
+        let key = settings.cleanKey
         let model = settings.effectiveModel
 
         streamTask = Task { [weak self] in

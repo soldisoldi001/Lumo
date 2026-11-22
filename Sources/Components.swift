@@ -27,7 +27,25 @@ enum Theme {
     }
 
     static func hand(_ size: CGFloat, bold: Bool = false) -> Font {
-        .custom(bold ? "Noteworthy-Bold" : "Noteworthy-Light", size: size)
+        .custom("BradleyHandITCTT-Bold", size: size)
+    }
+
+    static func symbol(_ name: String) -> String {
+        let map: [String: String] = [
+            "eye": "eye", "ear": "ear", "brain": "brain.head.profile", "heart": "heart.fill",
+            "lightbulb": "lightbulb.fill", "book": "book.fill", "globe": "globe.europe.africa.fill",
+            "atom": "atom", "leaf": "leaf.fill", "bolt": "bolt.fill", "flame": "flame.fill",
+            "drop": "drop.fill", "clock": "clock.fill", "calculator": "function",
+            "chart": "chart.bar.fill", "search": "magnifyingglass", "gear": "gearshape.fill",
+            "person": "person.fill", "people": "person.2.fill", "building": "building.columns.fill",
+            "medical": "cross.case.fill", "pill": "pills.fill", "tool": "hammer.fill",
+            "phone": "phone.fill", "mail": "envelope.fill", "lock": "lock.fill", "key": "key.fill",
+            "cloud": "cloud.fill", "star": "star.fill", "flag": "flag.fill", "map": "map.fill",
+            "camera": "camera.fill", "music": "music.note", "money": "eurosign.circle.fill",
+            "scale": "scalemass.fill", "rocket": "paperplane.fill", "shield": "shield.fill",
+            "puzzle": "puzzlepiece.fill"
+        ]
+        return map[name.lowercased().trimmed] ?? "sparkles"
     }
 }
 
