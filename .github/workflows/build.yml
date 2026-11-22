@@ -1,0 +1,39 @@
+name: Build IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compila l'app
+        run: |
+          set -euo pipefail
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          APP=build/Payload/Lumo.app
+          mkdir -p "$APP"
+          xcrun --sdk iphoneos swiftc -parse-as-library -O -swift-version 5 \
+            -target arm64-apple-ios16.0 -sdk "$SDK" \
+            -o "$APP/Lumo" Sources/*.swift
+          cp Info.plist "$APP/Info.plist"
+          ls -la "$APP"
+
+      - name: Crea l'IPA
+        run: |
+          set -euo pipefail
+          cd build
+          zip -qry Lumo.ipa Payload
+          unzip -l Lumo.ipa
+          SIZE=$(stat -f%z Lumo.ipa)
+          echo "Dimensione IPA: $SIZE byte"
+          test "$SIZE" -gt 50000
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Lumo-ipa
+          path: build/Lumo.ipa
