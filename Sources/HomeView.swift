@@ -5,13 +5,19 @@ import AVFoundation
 struct LumoApp: App {
     @StateObject private var settings = AppSettings()
     @StateObject private var session = BoardSession()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             HomeView()
                 .environmentObject(settings)
                 .environmentObject(session)
+                .environmentObject(session.store)
                 .preferredColorScheme(.dark)
+                .onChange(of: scenePhase) { phase in
+                    // uscendo dall'app lo studio viene salvato e potrai riprenderlo
+                    if phase == .background { session.suspendAndSave() }
+                }
         }
     }
 }
@@ -19,9 +25,11 @@ struct LumoApp: App {
 struct HomeView: View {
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var session: BoardSession
+    @EnvironmentObject var store: SessionStore
     @State private var text = ""
     @State private var showBoard = false
     @State private var showSettings = false
+    @State private var showHistory = false
 
     var body: some View {
         ZStack {
@@ -49,6 +57,7 @@ struct HomeView: View {
                     }
                 }
                 Spacer()
+                resumeCard
                 modeChips
                 InputBar(text: $text) { send() }
             }
@@ -56,6 +65,10 @@ struct HomeView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
                 .environmentObject(settings)
+        }
+        .sheet(isPresented: $showHistory) {
+            HistoryView { id in openSession(id, afterSheet: true) }
+                .environmentObject(store)
         }
         .fullScreenCover(isPresented: $showBoard) {
             BoardView()
@@ -84,15 +97,24 @@ struct HomeView: View {
             .frame(height: 40)
             .background(Capsule().fill(Theme.card))
             Spacer()
-            Button {
-                if session.blocks.isEmpty { return }
-                showBoard = true
-            } label: {
-                Image(systemName: "rectangle.and.pencil.and.ellipsis")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundColor(session.blocks.isEmpty ? Color.white.opacity(0.3) : .white)
-                    .frame(width: 44, height: 44)
-                    .background(Circle().fill(Theme.card))
+            HStack(spacing: 8) {
+                Button { showHistory = true } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Circle().fill(Theme.card))
+                }
+                Button {
+                    if session.blocks.isEmpty { return }
+                    showBoard = true
+                } label: {
+                    Image(systemName: "rectangle.and.pencil.and.ellipsis")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundColor(session.blocks.isEmpty ? Color.white.opacity(0.3) : .white)
+                        .frame(width: 44, height: 44)
+                        .background(Circle().fill(Theme.card))
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -121,10 +143,48 @@ struct HomeView: View {
         .padding(.bottom, 10)
     }
 
+    @ViewBuilder
+    private var resumeCard: some View {
+        if let s = store.sessions.first(where: { $0.interrupted }) {
+            Button { openSession(s.id, afterSheet: false) } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 30))
+                        .foregroundColor(Theme.violet)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Riprendi lo studio")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        Text(s.title)
+                            .font(.system(size: 13))
+                            .foregroundColor(Color.white.opacity(0.65))
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(RoundedRectangle(cornerRadius: 18).fill(Theme.card))
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
+            }
+        }
+    }
+
+    private func openSession(_ id: UUID, afterSheet: Bool) {
+        session.load(id, settings: settings)
+        if afterSheet {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { showBoard = true }
+        } else {
+            showBoard = true
+        }
+    }
+
     private func send() {
         let q = text.trimmed
         guard !q.isEmpty else { return }
         text = ""
+        session.newSession()      // ogni nuovo argomento dalla home è una sessione a sé
         session.ask(q, settings: settings)
         showBoard = true
     }
@@ -134,6 +194,8 @@ struct SettingsView: View {
     @EnvironmentObject var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
     @StateObject private var tester = SpeechEngine()
+    @StateObject private var natTester = NaturalVoice()
+    @State private var voiceTest = ""
     @State private var showKey = false
     @State private var verifyText = ""
     @State private var verifying = false
@@ -207,26 +269,41 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("Voce attiva", isOn: $settings.voiceOn)
-                    Picker("Voce", selection: $settings.voiceID) {
+                    Toggle("Voce naturale (Gemini)", isOn: $settings.naturalVoice)
+                    if settings.naturalVoice {
+                        Picker("Timbro", selection: $settings.geminiVoice) {
+                            ForEach(GeminiTTS.voices, id: \.self) { Text($0).tag($0) }
+                        }
+                        TextField("Modello voce", text: $settings.ttsModel)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        VStack(alignment: .leading) {
+                            Text("Velocità voce naturale")
+                            Slider(value: $settings.playSpeed, in: 0.85...1.5, step: 0.05)
+                        }
+                    }
+                    Picker("Voce di riserva", selection: $settings.voiceID) {
                         Text("Automatica (la migliore)").tag("")
                         ForEach(SpeechEngine.italianVoices(), id: \.identifier) { v in
                             Text("\(v.name) · \(SpeechEngine.qualityLabel(v))").tag(v.identifier)
                         }
                     }
                     VStack(alignment: .leading) {
-                        Text("Velocità")
+                        Text("Velocità voce di riserva")
                         Slider(value: $settings.speechRate, in: 0.40...0.62, step: 0.01)
                     }
                     Button("Prova la voce") {
-                        Task {
-                            await tester.speak("Ciao, sono Lumo. Ti spiego tutto alla lavagna, passo dopo passo.",
-                                               voiceID: settings.voiceID, rate: settings.speechRate)
-                        }
+                        Task { await testVoice() }
+                    }
+                    if !voiceTest.isEmpty {
+                        Text(voiceTest)
+                            .font(.system(size: 14))
+                            .foregroundColor(voiceTest.hasPrefix("\u{2705}") ? .green : Theme.flame)
                     }
                 } header: {
                     Text("Voce")
                 } footer: {
-                    Text("Per una voce molto più naturale scarica una voce italiana Avanzata o Premium: Impostazioni › Accessibilità › Contenuto letto › Voci › Italiano.")
+                    Text("La voce naturale usa la stessa chiave Gemini e ha un limite gratuito: se finisce, Lumo passa da solo alla voce di sistema. Per una voce di sistema migliore scarica una voce italiana Avanzata o Premium: Impostazioni › Accessibilità › Contenuto letto › Voci › Italiano.")
                 }
 
                 Section("Studio") {
@@ -253,6 +330,26 @@ struct SettingsView: View {
         }
     }
 
+    private func testVoice() async {
+        let phrase = "Ciao, sono Lumo. Ti spiego tutto alla lavagna, passo dopo passo."
+        voiceTest = ""
+        if settings.naturalVoice && settings.provider == .gemini && !settings.cleanKey.isEmpty {
+            do {
+                let wav = try await GeminiTTS.audio(text: phrase, voice: settings.geminiVoice,
+                                                    model: settings.ttsModel, apiKey: settings.cleanKey)
+                voiceTest = "\u{2705} Voce naturale attiva."
+                await natTester.play(wav, speed: settings.playSpeed)
+                return
+            } catch {
+                let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                voiceTest = "\u{274C} " + msg + " Uso la voce di sistema."
+            }
+        } else if settings.naturalVoice {
+            voiceTest = "La voce naturale richiede il servizio Gemini e la chiave API."
+        }
+        await tester.speak(phrase, voiceID: settings.voiceID, rate: settings.speechRate)
+    }
+
     private func verify() async {
         verifying = true
         verifyText = ""
@@ -262,20 +359,12 @@ struct SettingsView: View {
             verifying = false
             return
         }
-        var note = ""
 
-        // 1) elenco dei modelli: controlla che la chiave sia valida e che il modello esista ancora
+        // 1) elenco dei modelli: controlla che la chiave sia valida
+        var ids: [String] = []
         if settings.provider != .custom {
             do {
-                let ids = try await LLMClient.listModels(endpoint: settings.endpoint, apiKey: key)
-                if !ids.isEmpty {
-                    let cur = settings.effectiveModel
-                    let exists = ids.contains(where: { $0 == cur || $0 == "models/" + cur })
-                    if !exists, let best = LLMClient.pickModel(ids: ids, provider: settings.provider) {
-                        settings.model = best
-                        note = "Il modello precedente non c\u{2019}era pi\u{00F9}: ho scelto \(best). "
-                    }
-                }
+                ids = try await LLMClient.listModels(endpoint: settings.endpoint, apiKey: key)
             } catch {
                 let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 verifyText = "\u{274C} " + msg
@@ -284,24 +373,45 @@ struct SettingsView: View {
             }
         }
 
-        // 2) prova reale: una domanda minuscola in streaming
-        do {
-            var got = ""
-            let test = [ChatMessage(role: "user", content: "Rispondi con una sola parola: ok")]
-            for try await chunk in LLMClient.stream(endpoint: settings.endpoint, apiKey: key,
-                                                    model: settings.effectiveModel, messages: test) {
-                got += chunk
-                if !got.isEmpty { break }
+        // 2) prova reale con il modello attuale; se non è più disponibile provo gli altri
+        let original = settings.effectiveModel
+        let queue = LLMClient.candidates(current: original, ids: ids, provider: settings.provider)
+        var lastError = "Nessun modello ha risposto."
+        for m in queue {
+            do {
+                var got = ""
+                let test = [ChatMessage(role: "user", content: "Rispondi con una sola parola: ok")]
+                for try await chunk in LLMClient.stream(endpoint: settings.endpoint, apiKey: key,
+                                                        model: m, messages: test) {
+                    got += chunk
+                    if !got.isEmpty { break }
+                }
+                if got.isEmpty {
+                    lastError = "Nessuna risposta da \(m)."
+                    continue
+                }
+                var note = ""
+                if m != original {
+                    settings.model = m
+                    note = "Il modello precedente non era pi\u{00F9} disponibile: ora uso \(m). "
+                }
+                verifyText = "\u{2705} " + note + "Tutto funziona con \(m)."
+                verifying = false
+                return
+            } catch let e as LLMError {
+                lastError = e.errorDescription ?? "Errore del servizio."
+                if case .http(let code, let body) = e {
+                    let modelProblem = code == 404 || (code == 400 && body.lowercased().contains("model"))
+                    if !modelProblem { break }
+                } else {
+                    break
+                }
+            } catch {
+                lastError = error.localizedDescription
+                break
             }
-            if got.isEmpty {
-                verifyText = "\u{26A0}\u{FE0F} Il servizio non ha risposto. Riprova tra poco."
-            } else {
-                verifyText = "\u{2705} " + note + "Tutto funziona con \(settings.effectiveModel)."
-            }
-        } catch {
-            let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            verifyText = "\u{274C} " + msg
         }
+        verifyText = "\u{274C} " + lastError
         verifying = false
     }
 }

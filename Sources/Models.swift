@@ -24,7 +24,7 @@ enum Provider: String, CaseIterable, Identifiable {
 
     var defaultModel: String {
         switch self {
-        case .gemini: return "gemini-2.5-flash-lite"
+        case .gemini: return "gemini-3.5-flash-lite"
         case .groq: return "llama-3.3-70b-versatile"
         case .custom: return ""
         }
@@ -41,7 +41,7 @@ enum Provider: String, CaseIterable, Identifiable {
 
 // MARK: - Study mode
 
-enum StudyMode: String, CaseIterable, Identifiable {
+enum StudyMode: String, CaseIterable, Identifiable, Codable {
     case lavagna, riassumi, cheat
     var id: String { rawValue }
 
@@ -76,19 +76,33 @@ final class AppSettings: ObservableObject {
     @Published var voiceOn: Bool { didSet { d.set(voiceOn, forKey: "voiceOn") } }
     @Published var level: String { didSet { d.set(level, forKey: "level") } }
     @Published var streak: Int { didSet { d.set(streak, forKey: "streak") } }
+    @Published var naturalVoice: Bool { didSet { d.set(naturalVoice, forKey: "naturalVoice") } }
+    @Published var geminiVoice: String { didSet { d.set(geminiVoice, forKey: "geminiVoice") } }
+    @Published var ttsModel: String { didSet { d.set(ttsModel, forKey: "ttsModel") } }
+    @Published var playSpeed: Double { didSet { d.set(playSpeed, forKey: "playSpeed") } }
 
     static let levels = ["Medie", "Superiori", "Università"]
 
     init() {
         provider = Provider(rawValue: d.string(forKey: "provider") ?? "") ?? .gemini
         apiKey = d.string(forKey: "apiKey") ?? ""
-        model = d.string(forKey: "model") ?? Provider.gemini.defaultModel
+        var savedModel = d.string(forKey: "model") ?? Provider.gemini.defaultModel
+        // i modelli 2.5 non sono più disponibili ai nuovi utenti: passo al modello consigliato
+        if savedModel.lowercased().hasPrefix("gemini-2.") {
+            savedModel = Provider.gemini.defaultModel
+            d.set(savedModel, forKey: "model")
+        }
+        model = savedModel
         customURL = d.string(forKey: "customURL") ?? ""
         voiceID = d.string(forKey: "voiceID") ?? ""
         speechRate = d.object(forKey: "rate") as? Double ?? 0.5
         voiceOn = d.object(forKey: "voiceOn") as? Bool ?? true
         level = d.string(forKey: "level") ?? "Università"
         streak = d.integer(forKey: "streak")
+        naturalVoice = d.object(forKey: "naturalVoice") as? Bool ?? true
+        geminiVoice = d.string(forKey: "geminiVoice") ?? "Kore"
+        ttsModel = d.string(forKey: "ttsModel") ?? "gemini-3.1-flash-tts-preview"
+        playSpeed = d.object(forKey: "playSpeed") as? Double ?? 1.1
     }
 
     var endpoint: String {
@@ -130,8 +144,8 @@ enum BlockKind: String {
     case title, box, flow, merge, table, icon, list, arrow, formula, note, tip, question
 }
 
-struct BoardBlock: Identifiable {
-    let id = UUID()
+struct BoardBlock: Identifiable, Codable {
+    var id = UUID()
     var kind: BlockKind
     var text: String
     var items: [String] = []
@@ -139,6 +153,7 @@ struct BoardBlock: Identifiable {
     var subs: [String] = []
     var say: String = ""
     var color: String = "violet"
+    var dur: Double = 0   // secondi di voce: la scrittura a mano segue il ritmo della voce
 
     var displayLength: Int {
         text.count + sub.count

@@ -1,5 +1,15 @@
 import SwiftUI
 
+// MARK: - Disegno statico (PDF e sessioni riaperte: niente animazioni di scrittura)
+
+struct StaticDrawKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    var staticDraw: Bool {
+        get { self[StaticDrawKey.self] }
+        set { self[StaticDrawKey.self] = newValue }
+    }
+}
+
 // MARK: - Numeri casuali ripetibili (così ogni disegno ha sempre lo stesso tratto)
 
 struct SeededRNG: RandomNumberGenerator {
@@ -98,6 +108,7 @@ struct WriteOn<Content: View>: View {
     var duration: Double
     let content: Content
     @State private var p: CGFloat = 0
+    @Environment(\.staticDraw) private var staticDraw
 
     init(duration: Double, @ViewBuilder content: () -> Content) {
         self.duration = duration
@@ -109,7 +120,7 @@ struct WriteOn<Content: View>: View {
             .mask(
                 GeometryReader { geo in
                     Rectangle()
-                        .frame(width: max(1, geo.size.width * p), height: geo.size.height)
+                        .frame(width: max(1, geo.size.width * (staticDraw ? 1 : p)), height: geo.size.height)
                         .frame(width: geo.size.width, height: geo.size.height, alignment: .leading)
                 }
             )
@@ -133,6 +144,7 @@ struct SketchBox: View {
     var expand: Bool = false
     var time: Double = 0.9
     @State private var d: CGFloat = 0
+    @Environment(\.staticDraw) private var staticDraw
 
     var body: some View {
         VStack(spacing: 2) {
@@ -164,7 +176,7 @@ struct SketchBox: View {
                     RoughRect(seed: seed).fill(tint.opacity(0.2))
                 }
                 RoughRect(seed: seed)
-                    .trim(from: 0, to: d)
+                    .trim(from: 0, to: staticDraw ? 1 : d)
                     .stroke(Theme.ink, style: inkStroke)
             }
         )
@@ -177,19 +189,20 @@ struct SketchBox: View {
 struct SketchArrow: View {
     var vertical = false
     @State private var d: CGFloat = 0
+    @Environment(\.staticDraw) private var staticDraw
 
     var body: some View {
         Group {
             if vertical {
                 ArrowShape()
-                    .trim(from: 0, to: d)
+                    .trim(from: 0, to: staticDraw ? 1 : d)
                     .stroke(Theme.ink, style: inkStroke)
                     .frame(width: 34, height: 20)
                     .rotationEffect(.degrees(90))
                     .frame(width: 20, height: 34)
             } else {
                 ArrowShape()
-                    .trim(from: 0, to: d)
+                    .trim(from: 0, to: staticDraw ? 1 : d)
                     .stroke(Theme.ink, style: inkStroke)
                     .frame(width: 22, height: 16)
             }
@@ -205,6 +218,7 @@ struct SketchEllipse: View {
     var tint: Color
     var seed: Int
     @State private var d: CGFloat = 0
+    @Environment(\.staticDraw) private var staticDraw
 
     var body: some View {
         WriteOn(duration: 0.9) {
@@ -220,7 +234,7 @@ struct SketchEllipse: View {
             ZStack {
                 RoughEllipse(seed: seed).fill(tint.opacity(0.75))
                 RoughEllipse(seed: seed)
-                    .trim(from: 0, to: d)
+                    .trim(from: 0, to: staticDraw ? 1 : d)
                     .stroke(Theme.ink, style: inkStroke)
             }
         )
@@ -235,6 +249,7 @@ struct SketchMerge: View {
     let tint: Color
     let seed: Int
     @State private var d: CGFloat = 0
+    @Environment(\.staticDraw) private var staticDraw
 
     var body: some View {
         VStack(spacing: 0) {
@@ -247,7 +262,7 @@ struct SketchMerge: View {
                           tint: tint, seed: seed + 7, size: 20, expand: true)
             }
             MergeCurves()
-                .trim(from: 0, to: d)
+                .trim(from: 0, to: staticDraw ? 1 : d)
                 .stroke(Theme.ink, style: inkStroke)
                 .frame(height: 42)
             if !block.text.isEmpty {
@@ -265,6 +280,7 @@ struct SketchTable: View {
     let tint: Color
     let seed: Int
     @State private var d: CGFloat = 0
+    @Environment(\.staticDraw) private var staticDraw
 
     init(items: [String], tint: Color, seed: Int) {
         self.rows = items.map { line in
@@ -302,7 +318,7 @@ struct SketchTable: View {
         }
         .overlay(
             RoughRect(seed: seed)
-                .trim(from: 0, to: d)
+                .trim(from: 0, to: staticDraw ? 1 : d)
                 .stroke(Theme.ink, style: inkStroke)
         )
         .onAppear {
@@ -316,13 +332,14 @@ struct IconPop: View {
     var color: Color
     var delay: Double
     @State private var on = false
+    @Environment(\.staticDraw) private var staticDraw
 
     var body: some View {
         Image(systemName: symbol)
             .font(.system(size: 54, weight: .semibold))
             .foregroundColor(color)
-            .scaleEffect(on ? 1 : 0.2)
-            .opacity(on ? 1 : 0)
+            .scaleEffect(on || staticDraw ? 1 : 0.2)
+            .opacity(on || staticDraw ? 1 : 0)
             .onAppear {
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.6).delay(delay)) { on = true }
             }

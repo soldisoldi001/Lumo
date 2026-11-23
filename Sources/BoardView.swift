@@ -5,6 +5,7 @@ struct BoardView: View {
     @EnvironmentObject var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
     @State private var input = ""
+    @State private var shareItem: ShareItem?
 
     private let followUps: [(String, String)] = [
         ("Più semplice", "Non l'ho capito bene: rispiegamelo in modo più semplice, con un'analogia quotidiana, continuando lo schema."),
@@ -22,6 +23,14 @@ struct BoardView: View {
                 topBar
                 scroller
                 captionBar
+                if !session.voiceNote.isEmpty {
+                    Text(session.voiceNote)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Theme.ink.opacity(0.75))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, 6)
+                }
                 if case .error(let msg) = session.status {
                     Text(msg)
                         .font(.system(size: 14, weight: .semibold))
@@ -32,7 +41,9 @@ struct BoardView: View {
                         .padding(.horizontal, 14)
                         .padding(.bottom, 6)
                 }
-                if session.status == .idle && !session.blocks.isEmpty {
+                if session.canResume {
+                    resumeBar
+                } else if session.status == .idle && !session.blocks.isEmpty {
                     chips
                 }
                 InputBar(text: $input,
@@ -40,20 +51,32 @@ struct BoardView: View {
                     .background(Theme.paper.opacity(0.01))
             }
         }
+        .sheet(item: $shareItem) { item in
+            ShareSheet(url: item.url)
+        }
     }
 
     private var topBar: some View {
         HStack(spacing: 10) {
             CircleButton(icon: "xmark") {
-                session.stopAll()
+                session.suspendAndSave()
                 dismiss()
             }
             Spacer()
-            CircleButton(icon: "plus") { session.reset() }
+            if session.isActive {
+                CircleButton(icon: "stop.fill") { session.suspendAndSave() }
+            }
+            if !session.blocks.isEmpty {
+                CircleButton(icon: "square.and.arrow.up") { exportPDF() }
+            }
+            CircleButton(icon: "plus") { session.newSession() }
             CircleButton(icon: session.paused ? "play.fill" : "pause.fill") { session.togglePause() }
             CircleButton(icon: settings.voiceOn ? "speaker.wave.2.fill" : "speaker.slash.fill") {
                 settings.voiceOn.toggle()
-                if !settings.voiceOn { session.speech.stop() }
+                if !settings.voiceOn {
+                    session.speech.stop()
+                    session.natural.stop()
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -73,7 +96,9 @@ struct BoardView: View {
                             .padding(.top, 120)
                     }
                     ForEach(session.blocks) { b in
-                        BlockView(block: b).id(b.id)
+                        BlockView(block: b)
+                            .environment(\.staticDraw, session.restoredIDs.contains(b.id))
+                            .id(b.id)
                     }
                     if session.status == .thinking { ThinkingDots() }
                     Color.clear.frame(height: 8).id("bottom")
@@ -82,6 +107,11 @@ struct BoardView: View {
                 .padding(.top, 12)
             }
             .scrollDismissesKeyboard(.interactively)
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            }
             .onChange(of: session.blocks.count) { _ in
                 withAnimation(.easeOut(duration: 0.45)) {
                     proxy.scrollTo("bottom", anchor: .bottom)
@@ -103,6 +133,30 @@ struct BoardView: View {
                 .background(RoundedRectangle(cornerRadius: 14).fill(Color.black.opacity(0.78)))
                 .padding(.horizontal, 14)
                 .padding(.bottom, 8)
+        }
+    }
+
+    private var resumeBar: some View {
+        Button {
+            session.resume(settings: settings)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "play.fill")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Riprendi da dove eri rimasto")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                    Text("Studio in pausa, salvato nella cronologia")
+                        .font(.system(size: 12, weight: .medium))
+                        .opacity(0.85)
+                }
+                Spacer()
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .background(RoundedRectangle(cornerRadius: 18).fill(Theme.violet))
+            .padding(.horizontal, 14)
+            .padding(.bottom, 8)
         }
     }
 
@@ -128,6 +182,12 @@ struct BoardView: View {
         .padding(.bottom, 8)
     }
 
+    private func exportPDF() {
+        if let url = PDFExporter.makePDF(title: session.title, blocks: session.blocks) {
+            shareItem = ShareItem(url: url)
+        }
+    }
+
     private func send() {
         let q = input.trimmed
         guard !q.isEmpty else { return }
@@ -142,9 +202,10 @@ struct BlockView: View {
     let block: BoardBlock
 
     private var tint: Color { Theme.color(block.color) }
-    private var seed: Int { Int(UInt(bitPattern: block.id.hashValue) % 9973) + 1 }
+    private var seed: Int { block.id.uuidString.utf8.reduce(7) { ($0 &* 31 &+ Int($1)) % 9973 } + 1 }
     private var writeTime: Double {
-        min(2.4, max(0.6, 0.35 + Double(block.displayLength) * 0.035))
+        if block.dur > 0 { return min(5, max(0.8, block.dur * 0.7)) }
+        return min(2.4, max(0.6, 0.35 + Double(block.displayLength) * 0.035))
     }
 
     var body: some View {

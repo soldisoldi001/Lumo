@@ -1,6 +1,6 @@
 import Foundation
 
-struct ChatMessage {
+struct ChatMessage: Codable {
     let role: String
     let content: String
 }
@@ -45,7 +45,6 @@ enum LLMClient {
                     let body: [String: Any] = [
                         "model": model,
                         "stream": true,
-                        "temperature": 0.5,
                         "messages": messages.map { ["role": $0.role, "content": $0.content] }
                     ]
                     req.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -96,6 +95,24 @@ enum LLMClient {
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let arr = obj["data"] as? [[String: Any]] else { return [] }
         return arr.compactMap { $0["id"] as? String }
+    }
+
+    /// Elenco ordinato di modelli da provare, dal più adatto al meno adatto.
+    static func candidates(current: String, ids: [String], provider: Provider) -> [String] {
+        let names = ids.map { $0.hasPrefix("models/") ? String($0.dropFirst(7)) : $0 }
+        var out: [String] = []
+        func add(_ m: String?) {
+            guard let m = m, !m.isEmpty, !out.contains(m) else { return }
+            out.append(m)
+        }
+        add(current)
+        if provider == .gemini {
+            let preferred = ["gemini-3.5-flash-lite", "gemini-flash-lite-latest",
+                             "gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-3.5-flash"]
+            for m in preferred where names.isEmpty || names.contains(m) { add(m) }
+        }
+        add(pickModel(ids: ids, provider: provider))
+        return Array(out.prefix(6))
     }
 
     /// Sceglie un modello veloce tra quelli disponibili.

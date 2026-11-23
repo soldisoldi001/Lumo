@@ -135,9 +135,10 @@ struct Wave: Shape {
 struct ScribbleUnderline: View {
     var color: Color
     @State private var drawn: CGFloat = 0
+    @Environment(\.staticDraw) private var staticDraw
     var body: some View {
         Wave()
-            .trim(from: 0, to: drawn)
+            .trim(from: 0, to: staticDraw ? 1 : drawn)
             .stroke(color, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
             .frame(height: 10)
             .onAppear {
