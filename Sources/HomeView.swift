@@ -310,6 +310,12 @@ struct SettingsView: View {
                     Picker("Livello", selection: $settings.level) {
                         ForEach(AppSettings.levels, id: \.self) { Text($0).tag($0) }
                     }
+                    Toggle("Continua da solo", isOn: $settings.autoContinue)
+                    if settings.autoContinue {
+                        Picker("Pausa automatica dopo", selection: $settings.autoMinutes) {
+                            ForEach([3, 5, 10, 15], id: \.self) { Text("\($0) minuti").tag($0) }
+                        }
+                    }
                     HStack {
                         Text("Serie di giorni")
                         Spacer()

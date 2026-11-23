@@ -14,6 +14,7 @@ final class BoardSession: ObservableObject {
     @Published private(set) var voiceNote = ""
     @Published private(set) var title = ""
     @Published private(set) var restoredIDs: Set<UUID> = []
+    @Published private(set) var autoPaused = false
     @Published var paused = false
     @Published var mode: StudyMode = .lavagna
 
@@ -42,6 +43,10 @@ final class BoardSession: ObservableObject {
     private var playerTask: Task<Void, Never>?
     private var audioTasks: [UUID: Task<Data?, Never>] = [:]
     private var ttsCooldownUntil = Date.distantPast
+    private var autoStart = Date()
+    private var autoRounds = 0
+    private var topicComplete = false
+    private var streamRetries = 0
 
     init() {
         Task.detached(priority: .background) { GeminiTTS.pruneCache() }
@@ -62,8 +67,17 @@ final class BoardSession: ObservableObject {
             title = String(q.prefix(40))
             autoTitle = true
         }
+        // contesto: cosa c'è già sulla lavagna (serve per "continua", "non ho capito", ecc.)
+        let board = blocksSummary()
+        let prompt = board.isEmpty ? q : q + "\n\n(Sulla lavagna c'è già: \(board))"
+
         interrupted = false
+        autoPaused = false
         needsContinuation = false
+        topicComplete = false
+        autoStart = Date()
+        autoRounds = 0
+        streamRetries = 0
         replay = nil
         speakingID = nil
         pending = []
@@ -79,12 +93,12 @@ final class BoardSession: ObservableObject {
             persist(immediately: true)
             return
         }
-        startStream(prompt: q, remember: q, continuation: false)
+        startStream(prompt: prompt, remember: q, continuation: false, restartPlayer: true)
     }
 
-    private func startStream(prompt: String, remember: String, continuation: Bool) {
+    private func startStream(prompt: String, remember: String, continuation: Bool, restartPlayer: Bool) {
         guard let settings = settings else { return }
-        status = .thinking
+        if restartPlayer { status = .thinking }
         streamFinished = false
         receivedBlocks = 0
         lastQuestion = remember
@@ -110,13 +124,17 @@ final class BoardSession: ObservableObject {
                     }
                 }
                 if Task.isCancelled { return }
-                self?.streamDone(question: remember, raw: raw, continuation: continuation)
+                self?.streamDone(question: remember, raw: raw, continuation: continuation,
+                                 incomplete: extractor.isIncomplete)
+            } catch LLMError.truncated {
+                if Task.isCancelled { return }
+                self?.recoverCutOff(question: remember, continuation: continuation)
             } catch {
                 if Task.isCancelled { return }
                 self?.streamFailed(error)
             }
         }
-        startPlayer()
+        if restartPlayer { startPlayer() }
         persist()
     }
 
@@ -126,14 +144,22 @@ final class BoardSession: ObservableObject {
         prefetchNext()
     }
 
-    private func streamDone(question: String, raw: String, continuation: Bool) {
+    private func streamDone(question: String, raw: String, continuation: Bool, incomplete: Bool) {
+        let text = raw.trimmed
+        let looksLikeJSON = text.hasPrefix("{") || text.hasPrefix("```") || text.contains("{\"t\"")
+
+        // risposta tagliata a metà, oppure JSON che non riesco a leggere: riprovo da solo
+        if incomplete || (receivedBlocks == 0 && looksLikeJSON && !continuation) {
+            recoverCutOff(question: question, continuation: continuation)
+            return
+        }
+
         if continuation {
-            history.append(ChatMessage(role: "user", content: question))
-            history.append(ChatMessage(role: "assistant", content: blocksSummary()))
+            // nessun blocco nuovo = non c'è più nulla da aggiungere
+            if receivedBlocks == 0 { topicComplete = true }
         } else {
             if receivedBlocks == 0 {
-                // Il modello ha risposto in testo semplice: lo mostro comunque.
-                let text = raw.trimmed
+                // risposta in testo semplice (non JSON): la mostro comunque
                 if text.isEmpty {
                     pendingError = "Nessuna risposta dal servizio. Riprova."
                 } else {
@@ -148,19 +174,40 @@ final class BoardSession: ObservableObject {
         needsContinuation = false
     }
 
+    /// La risposta si è interrotta: provo a farla proseguire (fino a 2 volte), poi lascio il pulsante Riprendi.
+    private func recoverCutOff(question: String, continuation: Bool) {
+        if streamRetries < 2 {
+            streamRetries += 1
+            startStream(prompt: continuePrompt(), remember: question,
+                        continuation: true, restartPlayer: false)
+            return
+        }
+        pendingError = "La risposta si è interrotta. Tocca Riprendi per continuare."
+        needsContinuation = true
+        streamFinished = true
+    }
+
     private func streamFailed(_ error: Error) {
         pendingError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        needsContinuation = true     // potrai ritentare con "Riprendi"
         streamFinished = true
     }
 
     private func blocksSummary() -> String {
-        blocks.suffix(40)
+        (blocks + pending).suffix(40)
             .filter { $0.kind != .question }
             .map { b in
                 let extra = b.items.isEmpty ? "" : " (" + b.items.joined(separator: ", ") + ")"
                 return "\(b.kind.rawValue): \(b.text)\(extra)"
             }
             .joined(separator: "; ")
+    }
+
+    private func continuePrompt() -> String {
+        "Vai avanti con lo schema sull'argomento: \(lastQuestion). Sulla lavagna c'è già: \(blocksSummary()). "
+            + "Scrivi 4-8 blocchi nuovi che completano l'ultimo punto lasciato a metà oppure, se era completo, passano al prossimo aspetto importante non ancora trattato. "
+            + "Non ripetere nulla, non rifare il title, collegati all'ultimo blocco. "
+            + "Se l'argomento è già stato spiegato per intero, scrivi solo una note di ripasso con \"done\":true."
     }
 
     // MARK: - Regia: un blocco alla volta, comparsa e voce partono insieme
@@ -222,6 +269,7 @@ final class BoardSession: ObservableObject {
             autoTitle = false
         }
         caption = b.say
+        if b.done == true { topicComplete = true }
         prefetchNext()
         persist()
 
@@ -288,12 +336,30 @@ final class BoardSession: ObservableObject {
 
     private func finishPlayback() {
         caption = ""
-        interrupted = false
         if let e = pendingError {
+            interrupted = needsContinuation
             status = .error(e)
-        } else {
-            status = .idle
+            persist(immediately: true)
+            return
         }
+        interrupted = false
+
+        // continua da solo finché non fai una domanda o non scade il tempo
+        if let s = settings, s.autoContinue, !topicComplete, currentID != nil {
+            let limit = autoStart.addingTimeInterval(Double(max(1, s.autoMinutes)) * 60)
+            if Date() < limit && autoRounds < 15 {
+                autoRounds += 1
+                streamRetries = 0
+                startStream(prompt: continuePrompt(), remember: lastQuestion,
+                            continuation: true, restartPlayer: true)
+                return
+            } else {
+                needsContinuation = true
+                interrupted = true
+                autoPaused = true
+            }
+        }
+        status = .idle
         persist(immediately: true)
     }
 
@@ -349,15 +415,17 @@ final class BoardSession: ObservableObject {
         self.settings = settings
         settings.registerStudy()
         interrupted = false
+        autoPaused = false
         paused = false
         pendingError = nil
         voiceNote = ""
+        autoStart = Date()
+        autoRounds = 0
+        streamRetries = 0
         if needsContinuation {
             needsContinuation = false
-            let prompt = "Continua lo schema da dove ti sei interrotto. Argomento: \(lastQuestion). "
-                + "Sulla lavagna c'è già: \(blocksSummary()). "
-                + "Scrivi SOLO i blocchi mancanti, senza ripetere quelli già scritti e senza rifare il title; collegati all'ultimo blocco."
-            startStream(prompt: prompt, remember: lastQuestion, continuation: true)
+            startStream(prompt: continuePrompt(), remember: lastQuestion,
+                        continuation: true, restartPlayer: true)
         } else {
             streamFinished = true
             status = .thinking
@@ -383,6 +451,8 @@ final class BoardSession: ObservableObject {
         needsContinuation = s.needsContinuation
         lastQuestion = s.lastQuestion
         interrupted = s.interrupted
+        autoPaused = false
+        topicComplete = false
         inFlight = nil
         speakingID = nil
         streamFinished = true
@@ -404,6 +474,8 @@ final class BoardSession: ObservableObject {
         replay = nil
         needsContinuation = false
         interrupted = false
+        autoPaused = false
+        topicComplete = false
         lastQuestion = ""
         caption = ""
         voiceNote = ""

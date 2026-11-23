@@ -143,9 +143,11 @@ struct BoardView: View {
             HStack(spacing: 10) {
                 Image(systemName: "play.fill")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Riprendi da dove eri rimasto")
+                    Text(session.autoPaused ? "Continua" : "Riprendi da dove eri rimasto")
                         .font(.system(size: 16, weight: .bold, design: .rounded))
-                    Text("Studio in pausa, salvato nella cronologia")
+                    Text(session.autoPaused
+                         ? "Pausa automatica dopo \(settings.autoMinutes) minuti"
+                         : "Studio in pausa, salvato nella cronologia")
                         .font(.system(size: 12, weight: .medium))
                         .opacity(0.85)
                 }

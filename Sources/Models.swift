@@ -80,6 +80,8 @@ final class AppSettings: ObservableObject {
     @Published var geminiVoice: String { didSet { d.set(geminiVoice, forKey: "geminiVoice") } }
     @Published var ttsModel: String { didSet { d.set(ttsModel, forKey: "ttsModel") } }
     @Published var playSpeed: Double { didSet { d.set(playSpeed, forKey: "playSpeed") } }
+    @Published var autoContinue: Bool { didSet { d.set(autoContinue, forKey: "autoContinue") } }
+    @Published var autoMinutes: Int { didSet { d.set(autoMinutes, forKey: "autoMinutes") } }
 
     static let levels = ["Medie", "Superiori", "Università"]
 
@@ -103,6 +105,8 @@ final class AppSettings: ObservableObject {
         geminiVoice = d.string(forKey: "geminiVoice") ?? "Kore"
         ttsModel = d.string(forKey: "ttsModel") ?? "gemini-3.1-flash-tts-preview"
         playSpeed = d.object(forKey: "playSpeed") as? Double ?? 1.1
+        autoContinue = d.object(forKey: "autoContinue") as? Bool ?? true
+        autoMinutes = d.object(forKey: "autoMinutes") as? Int ?? 5
     }
 
     var endpoint: String {
@@ -154,6 +158,7 @@ struct BoardBlock: Identifiable, Codable {
     var say: String = ""
     var color: String = "violet"
     var dur: Double = 0   // secondi di voce: la scrittura a mano segue il ritmo della voce
+    var done: Bool? = nil // true sull'ultimo blocco quando l'argomento è completo
 
     var displayLength: Int {
         text.count + sub.count
@@ -173,6 +178,8 @@ struct BoardBlock: Identifiable, Codable {
         let say = ((o["say"] as? String) ?? "").trimmed
         let color = ((o["color"] as? String) ?? "violet").lowercased()
         if text.isEmpty && items.isEmpty { return nil }
-        return BoardBlock(kind: kind, text: text, items: items, sub: sub, subs: subs, say: say, color: color)
+        var b = BoardBlock(kind: kind, text: text, items: items, sub: sub, subs: subs, say: say, color: color)
+        if (o["done"] as? Bool) == true { b.done = true }
+        return b
     }
 }

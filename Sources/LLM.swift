@@ -8,11 +8,14 @@ struct ChatMessage: Codable {
 enum LLMError: LocalizedError {
     case badURL
     case http(Int, String)
+    case truncated
 
     var errorDescription: String? {
         switch self {
         case .badURL:
             return "Indirizzo del servizio non valido."
+        case .truncated:
+            return "La risposta è stata interrotta dal servizio."
         case .http(let code, let body):
             var head: String
             switch code {
@@ -45,6 +48,7 @@ enum LLMClient {
                     let body: [String: Any] = [
                         "model": model,
                         "stream": true,
+                        "max_tokens": 8192,
                         "messages": messages.map { ["role": $0.role, "content": $0.content] }
                     ]
                     req.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -59,17 +63,26 @@ enum LLMClient {
                         }
                         throw LLMError.http(http.statusCode, errText)
                     }
+                    var truncated = false
                     for try await line in bytes.lines {
                         guard line.hasPrefix("data:") else { continue }
                         let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                         if payload == "[DONE]" { break }
                         guard let data = payload.data(using: .utf8),
-                              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-                              let choices = obj["choices"] as? [[String: Any]],
-                              let delta = choices.first?["delta"] as? [String: Any],
-                              let content = delta["content"] as? String else { continue }
-                        continuation.yield(content)
+                              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
+                        // errore comunicato a metà dello stream (per esempio limite gratuito raggiunto)
+                        if let err = obj["error"] as? [String: Any] {
+                            throw LLMError.http((err["code"] as? Int) ?? 500, (err["message"] as? String) ?? "")
+                        }
+                        guard let choices = obj["choices"] as? [[String: Any]],
+                              let first = choices.first else { continue }
+                        if let fr = first["finish_reason"] as? String, fr == "length" { truncated = true }
+                        if let delta = first["delta"] as? [String: Any],
+                           let content = delta["content"] as? String {
+                            continuation.yield(content)
+                        }
                     }
+                    if truncated { throw LLMError.truncated }
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -147,6 +160,9 @@ struct JSONObjectExtractor {
     private var depth = 0
     private var inString = false
     private var escape = false
+
+    /// true se è arrivato l'inizio di un oggetto JSON che non è mai stato chiuso (risposta tagliata)
+    var isIncomplete: Bool { depth > 0 }
 
     mutating func feed(_ s: String) -> [String] {
         var out: [String] = []
@@ -228,6 +244,7 @@ enum Prompts {
         - Dubbio, approfondimento o richiesta di semplificare su ciò che hai già scritto: CONTINUA lo schema esistente. Non ripetere i blocchi già scritti e non rifare il title. Parti da un blocco che si collega a quello che c'è già, poi 4-8 blocchi. Se chiede di semplificare, usa un'analogia quotidiana e parole semplici. Se manda un esercizio, risolvilo passo passo con formula e note.
         - Inizia subito con il primo blocco, senza preamboli. Non andare a capo dentro i valori.
         - Se non sei sicuro di un dato, dillo in una note invece di inventare.
+        - Se ti viene chiesto di andare avanti: scrivi 4-8 blocchi nuovi sul prossimo aspetto non ancora trattato, collegati allo schema esistente, senza ripetere. Quando l'argomento è stato spiegato per intero, chiudi con una note di ripasso che contiene anche "done":true e non aggiungere altro. Non usare "done" se resta ancora qualcosa di importante da spiegare.
         \#(extra)
         """#
     }
