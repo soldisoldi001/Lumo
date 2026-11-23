@@ -140,7 +140,7 @@ final class AppSettings: ObservableObject {
 
 // MARK: - Whiteboard blocks
 
-enum BlockKind: String {
+enum BlockKind: String, Codable {
     case title, box, flow, merge, table, icon, list, arrow, formula, note, tip, question
 }
 
